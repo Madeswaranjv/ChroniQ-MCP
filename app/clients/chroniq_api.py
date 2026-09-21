@@ -15,6 +15,7 @@ import logging
 from typing import Any
 
 import httpx
+from mcp.server.mcpserver.exceptions import ToolError
 
 from app.auth import get_caller_bearer_token
 from app.config import settings
@@ -34,12 +35,18 @@ _SENSITIVE_FIELDS = frozenset({
 })
 
 
-class ChroniqAPIError(RuntimeError):
-    """Raised when a ChroniQ backend request fails in a structured way."""
+class ChroniqAPIError(ToolError):
+    """Raised when a ChroniQ backend request fails in a structured way.
+
+    Inherits from MCP ToolError so anticipated backend errors surface their
+    safe, sanitized explanation directly to the MCP client instead of
+    triggering a generic unexpected crash message.
+    """
 
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
 
 
 def _sanitise(obj: Any) -> Any:

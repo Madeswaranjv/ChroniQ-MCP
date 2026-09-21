@@ -148,6 +148,8 @@ from app.tools.account import (  # noqa: E402
 
 mcp.tool()(update_notification_preferences)
 
+from app.auth import BearerAuthMiddleware
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
@@ -159,8 +161,92 @@ logger.info(
     settings.chroniq_api_base_url,
 )
 
+
+def create_app(
+    path: str | None = None,
+    host: str | None = None,
+):
+    """Create the Starlette application with BearerAuthMiddleware."""
+    http_app = mcp.streamable_http_app(
+        streamable_http_path=path or settings.mcp_path,
+        host=host or settings.mcp_host,
+    )
+    http_app.add_middleware(BearerAuthMiddleware)
+    return http_app
+
+
+# ASGI application instance for uvicorn (e.g. uvicorn app.server:app)
+app = create_app()
+
+
+def main() -> None:
+    """CLI and server entrypoint supporting HTTP (streamable-http, sse) and stdio."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ChroniQ MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["streamable-http", "sse", "stdio"],
+        default=settings.mcp_transport,
+        help="Transport protocol (default from MCP_TRANSPORT or streamable-http)",
+    )
+    parser.add_argument(
+        "--host",
+        default=settings.mcp_host,
+        help="Bind host for HTTP transports (default from MCP_HOST or 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=settings.mcp_port,
+        help="Bind port for HTTP transports (default from MCP_PORT / PORT or 8001)",
+    )
+    parser.add_argument(
+        "--path",
+        default=settings.mcp_path,
+        help="Path for Streamable HTTP endpoint (default /mcp)",
+    )
+    args = parser.parse_args()
+
+    transport = args.transport
+    logger.info("Starting ChroniQ MCP Server [transport=%s]", transport)
+
+    if transport == "streamable-http":
+        import anyio
+        import uvicorn
+
+        http_app = create_app(path=args.path, host=args.host)
+        config = uvicorn.Config(
+            http_app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
+        server = uvicorn.Server(config)
+        logger.info(
+            "ChroniQ MCP HTTP endpoint ready at http://%s:%d%s",
+            args.host,
+            args.port,
+            args.path,
+        )
+        anyio.run(server.serve)
+    elif transport == "sse":
+        logger.info("Listening on http://%s:%d/sse", args.host, args.port)
+        mcp.run(
+            transport="sse",
+            host=args.host,
+            port=args.port,
+        )
+    elif transport == "stdio":
+        logger.info("ChroniQ MCP listening on stdio")
+        mcp.run(transport="stdio")
+    else:
+        raise ValueError(f"Unsupported transport: {transport}")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    mcp.run()
+    main()
+
